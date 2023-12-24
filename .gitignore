@@ -2,4 +2,4 @@
 .release
 scripts
 
-./deploy.nu
+/deploy.nu

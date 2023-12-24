@@ -20,7 +20,7 @@ pub fn setup() {
     let doc_dir = user_dirs
         .document_dir()
         .expect("Failed to get document dir")
-        .join("pocket-relay-dump.log");
+        .join("pocket-ark-dump.log");
 
     std::env::set_var("RUST_LOG", "debug");
     // Create logging appenders

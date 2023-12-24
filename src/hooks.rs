@@ -66,10 +66,10 @@ const VERIFY_CERTIFICATE_PATTERN: Pattern = Pattern {
 
 //// TODO: ANDROMEDA USES getaddrinfo
 const HOSTNAME_LOOKUP_PATTERN: Pattern = Pattern {
-    name: "gethostbyname",
-    start: 0x401000,
-    end: 0xFFFFFF,
-    mask: "x????xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    name: "getaddrinfo",
+    start: 0x0000000140100000,
+    end: 0x0000000200000000,
+    mask: "xx????xxxxxxxxxxxxxxxxx",
     op: &[
         0xFF, 0x15, 0x10, 0x09, 0xE9, 0x01, //   call   QWORD PTR [rip+0x1e90910]
         0x85, 0xC0, //  test   eax,eax
@@ -133,26 +133,27 @@ pub unsafe extern "system" fn fake_getaddrinfo(
 unsafe fn hook_host_lookup() {
     // TODO: THIS NEEDS TO BE REPLACED WITH `fake_getaddrinfo`
 
+    // address of actual 00 00 7F FE B6 5C 3C E0
+    // E0 3C 5C B6 FE 7F 00 00
+
     Pattern::apply_with_transform(
         &HOSTNAME_LOOKUP_PATTERN,
         8,
         |addr| {
             // Initial -> f652b0
 
+            debug!("Pre distance {addr:?}");
+
             // == Obtain the address from the call ????
             // call ???? (Obtain the relative call distance)
-            let distance = *(addr.add(1 /* Skip call opcode */) as *const usize);
+            let distance = *(addr.add(2 /* Skip call opcode */) as *const u32);
+
+            debug!("Post distance");
 
             // Relative jump -> EEF240 (jump to jmp in thunk table)
-            let jmp_address = addr.add(5 /* Skip call opcode + address */ + distance);
+            let jmp_address = addr.add(6 /* Skip call opcode + address */ + distance as usize);
 
-            // == Address to the final ptr
-            // jmp dword ptr ds:[????]
-            let address = *(jmp_address.add(2 /* Skip ptr jmp opcode */) as *const usize);
-
-            // Invalid call at -> 019A4DF1
-
-            address as *const u8
+            jmp_address
         },
         |addr| {
             // Replace the address with our faker function
