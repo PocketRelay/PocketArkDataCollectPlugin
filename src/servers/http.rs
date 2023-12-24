@@ -11,9 +11,9 @@ use std::convert::Infallible;
 use std::net::Ipv4Addr;
 use tokio::net::TcpListener;
 
-pub async fn start_server() {
+pub async fn start_server(port: u16) {
     // Initializing the underlying TCP listener
-    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, HTTP_PORT)).await {
+    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
         Ok(value) => value,
         Err(err) => {
             error_message("Failed to start http", &err.to_string());

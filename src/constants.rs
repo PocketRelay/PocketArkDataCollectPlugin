@@ -2,7 +2,7 @@
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The local redirector server port
-pub const REDIRECTOR_PORT: u16 = 42127;
+pub const REDIRECTOR_PORT: u16 = 42230;
 /// The local proxy main server port
 pub const MAIN_PORT: u16 = 42128;
 /// The local proxy telemetry server port

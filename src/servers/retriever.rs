@@ -230,7 +230,7 @@ impl OfficialInstance {
 /// Session implementation for a retriever client
 pub struct OfficialSession {
     /// The ID for the next request packet
-    id: u16,
+    id: u32,
     /// The underlying SSL / TCP stream connection
     stream: Framed<BlazeStream, PacketCodec>,
 }

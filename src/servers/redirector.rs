@@ -1,23 +1,26 @@
-use crate::{
-    constants::{MAIN_PORT, REDIRECTOR_PORT},
-    servers::packet::Packet,
-};
-use blaze_ssl_async::{BlazeAccept, BlazeListener};
-use futures_util::{SinkExt, StreamExt};
-use log::{debug, error};
+use crate::constants::{MAIN_PORT, REDIRECTOR_PORT};
+use hyper::body::Body;
+use hyper::header::{HeaderName, HeaderValue};
+use hyper::service::service_fn;
+use hyper::{server::conn::Http, Request};
+use hyper::{HeaderMap, Response, StatusCode};
+use log::error;
 use native_windows_gui::error_message;
-use std::{io, net::Ipv4Addr, time::Duration};
-use tdf::TdfSerialize;
-use tokio::{select, time::sleep};
-use tokio_util::codec::Framed;
+use openssl::pkey::PKey;
+use openssl::rsa::Rsa;
+use openssl::ssl::{Ssl, SslContext, SslMethod, SslVersion};
+use openssl::x509::X509;
 
-use super::packet::PacketCodec;
+use std::convert::Infallible;
+use std::net::Ipv4Addr;
+use std::pin::Pin;
+use tokio::net::TcpListener;
+use tokio_openssl::SslStream;
 
-/// Redirector server. Handles directing clients that connect to the local
-/// proxy server that will connect them to the target server.
+/// winter15.gosredirector.ea.com
 pub async fn start_server() {
-    // Bind a listener for SSLv3 connections over TCP
-    let listener = match BlazeListener::bind((Ipv4Addr::UNSPECIFIED, REDIRECTOR_PORT)).await {
+    // Initializing the underlying TCP listener
+    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, REDIRECTOR_PORT)).await {
         Ok(value) => value,
         Err(err) => {
             error_message("Failed to start redirector", &err.to_string());
@@ -26,98 +29,99 @@ pub async fn start_server() {
         }
     };
 
+    let ctx = create_ssl_context();
+
     // Accept incoming connections
     loop {
-        // Accept a new connection
-        let accept = match listener.accept().await {
+        let (stream, _) = match listener.accept().await {
             Ok(value) => value,
-            Err(err) => {
-                error!("Failed to accept redirector connection: {}", err);
-                break;
+            Err(_) => break,
+        };
+
+        let ssl = Ssl::new(&ctx).unwrap();
+
+        tokio::task::spawn(async move {
+            let mut stream = SslStream::new(ssl, stream).unwrap();
+
+            Pin::new(&mut stream).accept().await;
+
+            if let Err(err) = Http::new()
+                .serve_connection(stream, service_fn(handle_redirect))
+                .await
+            {
+                eprintln!("Failed to serve http connection: {:?}", err);
             }
-        };
-
-        debug!("Redirector connection ->");
-
-        // Spawn a handler for the listener
-        _ = tokio::spawn(handle_client(accept)).await;
-    }
-}
-
-/// The timeout before idle redirector connections are terminated
-/// (1 minutes before disconnect timeout)
-static DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
-
-const REDIRECTOR: u16 = 0x5;
-const GET_SERVER_INSTANCE: u16 = 0x1;
-
-/// Handles dealing with a redirector client
-///
-/// `stream`   The stream to the client
-/// `addr`     The client address
-/// `instance` The server instance information
-async fn handle_client(accept: BlazeAccept) -> io::Result<()> {
-    // Complete the SSLv3 handshaking process
-    let (stream, _) = match accept.finish_accept().await {
-        Ok(value) => value,
-        Err(err) => {
-            error!("Failed to accept redirector connection: {}", err);
-            return Ok(());
-        }
-    };
-
-    // Create a packet reader
-    let mut framed = Framed::new(stream, PacketCodec);
-
-    loop {
-        let packet = select! {
-            // Attempt to read packets from the stream
-            result = framed.next() => result,
-            // If the timeout completes before the redirect is complete the
-            // request is considered over and terminates
-            _ = sleep(DEFAULT_TIMEOUT) => { break; }
-        };
-
-        let packet = match packet.transpose()? {
-            Some(value) => value,
-            None => break,
-        };
-
-        let frame = &packet.frame;
-
-        // Empty response for any unknown requests
-        if frame.component != REDIRECTOR || frame.command != GET_SERVER_INSTANCE {
-            // Empty response for packets that aren't asking to redirect
-            framed.send(Packet::response_empty(&packet)).await?;
-            continue;
-        }
-
-        debug!("Recieved instance request packet");
-
-        // Response with the instance details
-        let response = Packet::response(&packet, ServerInstanceResponse);
-        framed.send(response).await?;
-        break;
-    }
-
-    Ok(())
-}
-
-/// Packet contents for providing the redirection details
-/// for 127.0.0.1 to allow proxying
-pub struct ServerInstanceResponse;
-
-impl TdfSerialize for ServerInstanceResponse {
-    fn serialize<S: tdf::TdfSerializer>(&self, w: &mut S) {
-        // Local server address
-        w.tag_union_start(b"ADDR", 0x0);
-        w.group(b"VALU", |w| {
-            w.tag_owned(b"IP", u32::from_be_bytes([127, 0, 0, 1]));
-            w.tag_owned(b"PORT", MAIN_PORT);
         });
-
-        // Disable SSLv3 use raw TCP
-        w.tag_bool(b"SECU", false);
-        w.tag_bool(b"XDNS", false);
     }
+}
+
+/// Creates the SSL context for the redirector to use
+fn create_ssl_context() -> SslContext {
+    let crt = X509::from_der(include_bytes!("cert.der")).unwrap();
+    let pkey = PKey::from_rsa(Rsa::private_key_from_pem(include_bytes!("server.key.pem")).unwrap())
+        .unwrap();
+
+    let mut builder = SslContext::builder(SslMethod::tls_server()).unwrap();
+    builder.set_certificate(&crt).unwrap();
+    builder.set_private_key(&pkey).unwrap();
+    builder
+        .set_min_proto_version(Some(SslVersion::TLS1_2))
+        .unwrap();
+    builder
+        .set_max_proto_version(Some(SslVersion::TLS1_2))
+        .unwrap();
+
+    builder.build()
+}
+
+async fn handle_redirect(req: Request<hyper::body::Body>) -> Result<Response<Body>, Infallible> {
+    if req.uri().path() != "/redirector/getServerInstance" {
+        let mut response = Response::new(hyper::body::Body::empty());
+        *response.status_mut() = StatusCode::NOT_FOUND;
+    }
+
+    let ip = u32::from_be_bytes([127, 0, 0, 1]);
+    let port = MAIN_PORT;
+
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+    <serverinstanceinfo>
+        <address member="0">
+            <valu>
+                <hostname>localhost</hostname>
+                <ip>{ip}</ip>
+                <port>{port}</port>
+            </valu>
+        </address>
+        <secure>0</secure>
+        <trialservicename></trialservicename>
+        <defaultdnsaddress>0</defaultdnsaddress>
+    </serverinstanceinfo>"#
+    );
+
+    let headers: HeaderMap = [
+        (
+            HeaderName::from_static("X-BLAZE-COMPONENT"),
+            HeaderValue::from_static("redirector"),
+        ),
+        (
+            HeaderName::from_static("X-BLAZE-COMMAND"),
+            HeaderValue::from_static("getServerInstance"),
+        ),
+        (
+            HeaderName::from_static("X-BLAZE-SEQNO"),
+            HeaderValue::from_static("0"),
+        ),
+        (
+            HeaderName::from_static("Content-Type"),
+            HeaderValue::from_static("application/xml"),
+        ),
+    ]
+    .into_iter()
+    .collect();
+
+    let mut response = Response::new(hyper::body::Body::from(body));
+    *response.headers_mut() = headers;
+
+    Ok(response)
 }
