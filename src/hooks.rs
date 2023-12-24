@@ -88,18 +88,20 @@ pub unsafe fn hook() {
     // verify_certificate();
 }
 
-static mut LOCAL_ADDR: SOCKADDR = SOCKADDR {
-    sa_family: AF_INET,
-    sa_data: [127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-};
-
-static ADDRESS_MAPPINGS: &[(&str, u16)] = &[
-    ("winter15.gosredirector.ea.com", 0),
-    ("gosca.ea.com", 0),
-    ("ec2-54-84-48-229.compute-1.amazonaws.com", 0),
-    ("mea-public.biowareonline.net", 0),
-    ("pin-river.data.ea.com", 0),
-    ("pin-em.data.ea.com", 0),
+static mut REDIRECT_ADDRESSES: &[&str] = &[
+    "winter15.gosredirector.ea.com",
+    "gsprodblapp-03.ea.com",
+    "gosca.ea.com",
+    "ec2-54-84-48-229.compute-1.amazonaws.com",
+    "mea-public.biowareonline.net",
+    "pin-river.data.ea.com",
+    "pin-em.data.ea.com",
+    "qos-prod-bio-dub-common-common.gos.ea.com",
+    "qos-prod-bio-iad-common-common.gos.ea.com",
+    "qos-prod-bio-sjc-common-common.gos.ea.com",
+    "qos-prod-bio-syd-common-common.gos.ea.com",
+    "qos-prod-m3d-brz-common-common.gos.ea.com",
+    "qos-prod-m3d-nrt-common-common.gos.ea.com",
 ];
 
 #[no_mangle]
@@ -109,36 +111,38 @@ pub unsafe extern "system" fn fake_getaddrinfo(
     phints: *const ADDRINFOA,
     ppresult: *mut *mut ADDRINFOA,
 ) -> i32 {
-    if !pnodename.is_null() {
-        // Derive the safe name from the str bytes
-        let nodename = CStr::from_ptr(pnodename.cast());
-        debug!("Node: {:?}", nodename);
-    }
-    if !pservicename.is_null() {
-        // Derive the safe name from the str bytes
-        let servicename = CStr::from_ptr(pservicename.cast());
-        debug!(" Service: {:?}", servicename);
-    }
+    // Derive the safe name from the str bytes
+    let nodename = CStr::from_ptr(pnodename.cast());
+    debug!("Lookup for: {:?}", nodename);
 
-    if !phints.is_null() {
-        let hints = &*phints;
-        debug!(
-            "{} {} {} {}",
-            hints.ai_flags, hints.ai_family, hints.ai_socktype, hints.ai_protocol
-        )
-    }
+    // Check it against the redirected addresses
+    for address in REDIRECT_ADDRESSES {
+        if nodename.to_bytes() == address.as_bytes() {
+            debug!("Redirecting {} to localhost", address);
 
-    // let hinits = &*phints;
-    // let mem: ADDRINFOA = ADDRINFOA {
-    //     ai_flags: hinits.ai_flags,
-    //     ai_family: AF_INET as i32,
-    //     ai_socktype: hinits.ai_socktype,
-    //     ai_protocol: hinits.ai_protocol,
-    //     ai_addrlen: 4,
-    //     ai_canonname: null_mut(),
-    //     ai_addr: &mut LOCAL_ADDR,
-    //     ai_next: null_mut(),
-    // };
+            let hinits = &*phints;
+
+            let addr = Box::leak(Box::new(SOCKADDR {
+                sa_family: AF_INET,
+                sa_data: [0, 0, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            }));
+
+            let addr_info = Box::leak(Box::new(ADDRINFOA {
+                ai_flags: 0,
+                ai_family: AF_INET as i32,
+                ai_socktype: hinits.ai_socktype,
+                ai_protocol: hinits.ai_protocol,
+                ai_addrlen: 16,
+                ai_canonname: null_mut(),
+                ai_addr: addr,
+                ai_next: null_mut(),
+            }));
+
+            *ppresult = addr_info;
+
+            return 0;
+        }
+    }
 
     getaddrinfo(pnodename, pservicename, phints, ppresult)
 }
