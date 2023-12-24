@@ -53,21 +53,6 @@ pub async fn start_server() {
 }
 
 async fn proxy_http(mut req: Request<hyper::body::Body>) -> Result<Response<Body>, Infallible> {
-    let body_data = req.body_mut().data().await;
-    if let Some(Ok(data)) = &body_data {
-        if let Ok(value) = String::from_utf8(data.to_vec()) {
-            debug!("UTF8: {}\n\n", value);
-        } else {
-            debug!("BINARY: {:?}", data.as_ref() as &[u8]);
-        }
-    }
-
-    let path = req
-        .uri()
-        .path_and_query()
-        .map(|value| value.as_str())
-        .unwrap_or_default();
-
     let req_headers = req.headers();
     let host = match req_headers.get(HOST).and_then(|value| value.to_str().ok()) {
         Some(value) => value,
@@ -78,10 +63,26 @@ async fn proxy_http(mut req: Request<hyper::body::Body>) -> Result<Response<Body
             return Ok(error_response);
         }
     };
-
-    let target_url = format!("https://{}{}", host, path);
+    let path = req.uri().clone();
+    let target_url = format!(
+        "{}://{}{}",
+        path.scheme_str().unwrap_or("https"),
+        host,
+        path.path_and_query()
+            .map(|value| value.as_str())
+            .unwrap_or("")
+    );
 
     debug!("Client HTTP request: {:?}", &req);
+
+    let body_data = req.body_mut().data().await;
+    if let Some(Ok(data)) = &body_data {
+        if let Ok(value) = String::from_utf8(data.to_vec()) {
+            debug!("UTF8: {}\n\n", value);
+        } else {
+            debug!("BINARY: {:?}", data.as_ref() as &[u8]);
+        }
+    }
 
     let client = reqwest::Client::builder()
         .default_headers(req.headers().clone())
