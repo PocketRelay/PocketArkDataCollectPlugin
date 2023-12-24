@@ -39,11 +39,11 @@ pub async fn start_server() {
         };
 
         let ssl = Ssl::new(&ctx).unwrap();
+        let stream = SslStream::new(ssl, stream).unwrap();
 
         tokio::task::spawn(async move {
-            let mut stream = SslStream::new(ssl, stream).unwrap();
-
-            Pin::new(&mut stream).accept().await;
+            let mut stream = stream;
+            Pin::new(&mut stream).accept().await.unwrap();
 
             if let Err(err) = Http::new()
                 .serve_connection(stream, service_fn(handle_redirect))

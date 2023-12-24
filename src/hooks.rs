@@ -3,6 +3,7 @@ use log::debug;
 use std::{
     alloc::{alloc, Layout},
     ffi::{CStr, CString},
+    mem::size_of,
     ptr::{addr_of, null_mut},
 };
 use windows_sys::{
@@ -64,7 +65,7 @@ const VERIFY_CERTIFICATE_PATTERN: Pattern = Pattern {
     ],
 };
 
-//// TODO: ANDROMEDA USES getaddrinfo
+/// TODO: ANDROMEDA USES getaddrinfo
 const HOSTNAME_LOOKUP_PATTERN: Pattern = Pattern {
     name: "getaddrinfo",
     start: 0x0000000140100000,
@@ -108,12 +109,24 @@ pub unsafe extern "system" fn fake_getaddrinfo(
     phints: *const ADDRINFOA,
     ppresult: *mut *mut ADDRINFOA,
 ) -> i32 {
-    // Derive the safe name from the str bytes
-    let nodename = CStr::from_ptr(pnodename.cast());
-    // Derive the safe name from the str bytes
-    let servicename = CStr::from_ptr(pservicename.cast());
+    if !pnodename.is_null() {
+        // Derive the safe name from the str bytes
+        let nodename = CStr::from_ptr(pnodename.cast());
+        debug!("Node: {:?}", nodename);
+    }
+    if !pservicename.is_null() {
+        // Derive the safe name from the str bytes
+        let servicename = CStr::from_ptr(pservicename.cast());
+        debug!(" Service: {:?}", servicename);
+    }
 
-    debug!("Node: {:?}, Service: {:?}", nodename, servicename);
+    if !phints.is_null() {
+        let hints = &*phints;
+        debug!(
+            "{} {} {} {}",
+            hints.ai_flags, hints.ai_family, hints.ai_socktype, hints.ai_protocol
+        )
+    }
 
     // let hinits = &*phints;
     // let mem: ADDRINFOA = ADDRINFOA {
@@ -138,11 +151,11 @@ unsafe fn hook_host_lookup() {
 
     Pattern::apply_with_transform(
         &HOSTNAME_LOOKUP_PATTERN,
-        8,
+        size_of::<usize>(),
         |addr| {
             // Initial -> f652b0
 
-            debug!("Pre distance {addr:?}");
+            debug!("Pre distance {}", addr as usize);
 
             // == Obtain the address from the call ????
             // call ???? (Obtain the relative call distance)
