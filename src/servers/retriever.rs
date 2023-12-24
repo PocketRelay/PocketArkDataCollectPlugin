@@ -17,6 +17,7 @@ use crate::servers::{components::redirector, packet::PacketDebug};
 use super::packet::{FireFrame2, FrameFlags, Packet, PacketCodec};
 
 mod response {
+
     use serde::Deserialize;
 
     #[derive(Deserialize)]
@@ -31,6 +32,7 @@ mod response {
 
     #[derive(Deserialize)]
     pub struct Valu {
+        #[serde(rename = "hostname")]
         pub host_name: String,
         pub ip: u32,
         pub port: u16,
@@ -77,7 +79,12 @@ impl OfficialInstance {
             Self::REDIRECT_PORT
         );
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .use_native_tls()
+            .danger_accept_invalid_hostnames(true)
+            .danger_accept_invalid_certs(true)
+            .build()
+            .unwrap();
         let response = client
             .post(redirector_url)
             .header(CONTENT_TYPE, "application/xml")
