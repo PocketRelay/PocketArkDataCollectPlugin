@@ -1,6 +1,6 @@
 use crate::constants::{MAIN_PORT, REDIRECTOR_PORT};
 use hyper::body::Body;
-use hyper::header::{HeaderName, HeaderValue};
+use hyper::header::{HeaderName, HeaderValue, CONTENT_TYPE};
 use hyper::service::service_fn;
 use hyper::{server::conn::Http, Request};
 use hyper::{HeaderMap, Response, StatusCode};
@@ -78,6 +78,7 @@ async fn handle_redirect(req: Request<hyper::body::Body>) -> Result<Response<Bod
     if req.uri().path() != "/redirector/getServerInstance" {
         let mut response = Response::new(hyper::body::Body::empty());
         *response.status_mut() = StatusCode::NOT_FOUND;
+        return Ok(response);
     }
 
     let ip = u32::from_be_bytes([127, 0, 0, 1]);
@@ -99,26 +100,14 @@ async fn handle_redirect(req: Request<hyper::body::Body>) -> Result<Response<Bod
     </serverinstanceinfo>"#
     );
 
-    let headers: HeaderMap = [
-        (
-            HeaderName::from_static("X-BLAZE-COMPONENT"),
-            HeaderValue::from_static("redirector"),
-        ),
-        (
-            HeaderName::from_static("X-BLAZE-COMMAND"),
-            HeaderValue::from_static("getServerInstance"),
-        ),
-        (
-            HeaderName::from_static("X-BLAZE-SEQNO"),
-            HeaderValue::from_static("0"),
-        ),
-        (
-            HeaderName::from_static("Content-Type"),
-            HeaderValue::from_static("application/xml"),
-        ),
-    ]
-    .into_iter()
-    .collect();
+    let mut headers = HeaderMap::new();
+    headers.insert("X-BLAZE-COMPONENT", HeaderValue::from_static("redirector"));
+    headers.insert(
+        "X-BLAZE-COMMAND",
+        HeaderValue::from_static("getServerInstance"),
+    );
+    headers.insert("X-BLAZE-SEQNO", HeaderValue::from_static("0"));
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/xml"));
 
     let mut response = Response::new(hyper::body::Body::from(body));
     *response.headers_mut() = headers;
