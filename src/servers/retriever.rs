@@ -1,124 +1,40 @@
-use blaze_ssl_async::{stream::BlazeStream, BlazeError};
+use anyhow::anyhow;
 use futures_util::{SinkExt, StreamExt};
+use hyper::header::CONTENT_TYPE;
 use log::{debug, error};
+use openssl::ssl::{Ssl, SslConnector, SslMethod};
 use reqwest;
-use serde::Deserialize;
-use std::{fmt::Display, net::Ipv4Addr};
+use serde::{Deserialize, Serialize};
+use std::{fmt::Display, net::Ipv4Addr, pin::Pin};
 use tdf::{DecodeError, GroupSlice, TdfDeserialize, TdfDeserializeOwned, TdfSerialize, TdfTyped};
 use thiserror::Error;
-use tokio::io;
+use tokio::{io, net::TcpStream};
+use tokio_openssl::SslStream;
 use tokio_util::codec::Framed;
 
 use crate::servers::{components::redirector, packet::PacketDebug};
 
 use super::packet::{FireFrame2, FrameFlags, Packet, PacketCodec};
 
-pub struct InstanceRequest;
+mod response {
+    use serde::Deserialize;
 
-impl TdfSerialize for InstanceRequest {
-    fn serialize<S: tdf::TdfSerializer>(&self, w: &mut S) {
-        w.tag_str(b"BSDK", "3.15.6.0");
-        w.tag_str(b"BTIM", "Dec 21 2012 12:47:10");
-        w.tag_str(b"CLNT", "MassEffect3-pc");
-        w.tag_u8(b"CLTP", 0);
-        w.tag_str(b"CSKU", "134845");
-        w.tag_str(b"CVER", "05427.124");
-        w.tag_str(b"DSDK", "8.14.7.1");
-        w.tag_str(b"ENV", "prod");
-        w.tag_union_unset(b"FPID");
-        w.tag_u32(b"LOC", 0x656e4e5a);
-        w.tag_str(b"NAME", "masseffect-3-pc");
-        w.tag_str(b"PLAT", "Windows");
-        w.tag_str(b"PROF", "standardSecure_v3");
+    #[derive(Deserialize)]
+    pub struct Response {
+        pub address: Address,
     }
-}
 
-/// Networking information for an instance. Contains the
-/// host address and the port
-#[derive(TdfTyped)]
-#[tdf(group)]
-pub struct InstanceAddress {
-    pub host: InstanceHost,
-    pub port: u16,
-}
-
-impl TdfSerialize for InstanceAddress {
-    fn serialize<S: tdf::TdfSerializer>(&self, w: &mut S) {
-        w.group_body(|w| {
-            self.host.serialize(w);
-            w.tag_u16(b"PORT", self.port);
-        });
+    #[derive(Deserialize)]
+    pub struct Address {
+        pub valu: Valu,
     }
-}
 
-impl TdfDeserializeOwned for InstanceAddress {
-    fn deserialize_owned(r: &mut tdf::TdfDeserializer<'_>) -> tdf::DecodeResult<Self> {
-        let host: InstanceHost = InstanceHost::deserialize_owned(r)?;
-        let port: u16 = r.tag(b"PORT")?;
-        GroupSlice::deserialize_content_skip(r)?;
-        Ok(Self { host, port })
+    #[derive(Deserialize)]
+    pub struct Valu {
+        pub host_name: String,
+        pub ip: u32,
+        pub port: u16,
     }
-}
-
-pub enum InstanceHost {
-    Host(String),
-    Address(Ipv4Addr),
-}
-
-impl From<InstanceHost> for String {
-    fn from(value: InstanceHost) -> Self {
-        match value {
-            InstanceHost::Address(value) => value.to_string(),
-            InstanceHost::Host(value) => value,
-        }
-    }
-}
-
-impl TdfSerialize for InstanceHost {
-    fn serialize<S: tdf::TdfSerializer>(&self, w: &mut S) {
-        match self {
-            InstanceHost::Host(value) => w.tag_str(b"HOST", value),
-            InstanceHost::Address(value) => w.tag_u32(b"IP", (*value).into()),
-        }
-    }
-}
-
-impl TdfDeserializeOwned for InstanceHost {
-    fn deserialize_owned(r: &mut tdf::TdfDeserializer<'_>) -> tdf::DecodeResult<Self> {
-        let host: Option<String> = r.try_tag(b"HOST")?;
-        if let Some(host) = host {
-            return Ok(Self::Host(host));
-        }
-        let ip: u32 = r.tag(b"IP")?;
-        Ok(Self::Address(Ipv4Addr::from(ip)))
-    }
-}
-
-/// Details about an instance. This is used for the redirector system
-/// to both encode for redirections and decode for the retriever system
-#[derive(TdfDeserialize)]
-pub struct InstanceDetails {
-    /// The networking information for the instance
-    #[tdf(tag = "ADDR")]
-    pub net: InstanceNet,
-    /// Whether the host requires a secure connection (SSLv3)
-    #[tdf(tag = "SECU")]
-    pub secure: bool,
-    #[tdf(tag = "XDNS")]
-    pub xdns: bool,
-}
-
-#[derive(Default, TdfSerialize, TdfDeserialize, TdfTyped)]
-pub enum InstanceNet {
-    #[tdf(key = 0x0, tag = "VALU")]
-    InstanceAddress(InstanceAddress),
-    #[tdf(unset)]
-    Unset,
-    #[default]
-    #[tdf(default)]
-    Default,
-    // IpAddress = 0x0,
-    // XboxServer = 0x1,
 }
 
 /// Connection details for an official server instance
@@ -129,48 +45,51 @@ pub struct OfficialInstance {
     pub port: u16,
 }
 
-/// Errors that could occur while attempting to obtain
-/// an official server instance details
-#[derive(Debug, Error)]
-pub enum InstanceError {
-    #[error("Failed to request lookup from cloudflare: {0}")]
-    LookupRequest(#[from] reqwest::Error),
-    #[error("Failed to lookup server response empty")]
-    MissingValue,
-    #[error("Failed to connect to server: {0}")]
-    Blaze(#[from] BlazeError),
-    #[error("Failed to retrieve instance: {0}")]
-    InstanceRequest(#[from] RetrieverError),
-    #[error("Server response missing address")]
-    MissingAddress,
-}
-
 impl OfficialInstance {
-    const REDIRECTOR_HOST: &str = "gosredirector.ea.com";
-    const REDIRECT_PORT: u16 = 42127;
+    const REDIRECTOR_HOST: &str = "winter15.gosredirector.ea.com";
+    const REDIRECT_PORT: u16 = 42230;
 
-    pub async fn obtain() -> Result<OfficialInstance, InstanceError> {
+    pub async fn obtain() -> anyhow::Result<OfficialInstance> {
         let host = Self::lookup_host().await?;
         debug!("Completed host lookup: {}", &host);
 
-        // Create a session to the redirector server
-        let mut session = OfficialSession::connect(&host, Self::REDIRECT_PORT).await?;
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <serverinstancerequest>
+      <blazesdkversion>15.1.1.3.0</blazesdkversion>
+      <blazesdkbuilddate>Feb  5 2017 13:00:04</blazesdkbuilddate>
+      <clientname>Contact</clientname>
+      <clienttype>CLIENT_TYPE_GAMEPLAY_USER</clienttype>
+      <clientplatform>pc</clientplatform>
+      <clientskuid>301449</clientskuid>
+      <clientversion>Future739583retail-x64-0001-60</clientversion>       
+      <dirtysdkversion>15.1.2.1.0</dirtysdkversion>
+      <environment>prod</environment>
+      <clientlocale>1701727834</clientlocale>
+      <name>masseffect-4-pc</name>
+      <platform>Windows</platform>
+      <connectionprofile>standardSecure_v4</connectionprofile>
+      <istrial>0</istrial>
+    </serverinstancerequest>"#;
 
-        // Request the server instance
-        let instance: InstanceDetails = session
-            .request(
-                redirector::COMPONENT,
-                redirector::GET_SERVER_INSTANCE,
-                InstanceRequest,
-            )
+        let redirector_url = format!(
+            "https://{}:{}/redirector/getServerInstance",
+            host,
+            Self::REDIRECT_PORT
+        );
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(redirector_url)
+            .header(CONTENT_TYPE, "application/xml")
+            .body(body)
+            .send()
             .await?;
+        let text = response.text().await?;
 
-        // Extract the host and port turning the host into a string
-        let (host, port) = match instance.net {
-            InstanceNet::InstanceAddress(addr) => (addr.host, addr.port),
-            _ => return Err(InstanceError::MissingAddress),
-        };
-        let host: String = host.into();
+        let body: response::Response = quick_xml::de::from_str(&text)?;
+
+        let host = body.address.valu.host_name;
+        let port = body.address.valu.port;
 
         debug!(
             "Retriever instance obtained. (Host: {} Port: {})",
@@ -180,7 +99,7 @@ impl OfficialInstance {
         Ok(OfficialInstance { host, port })
     }
 
-    async fn lookup_host() -> Result<String, InstanceError> {
+    async fn lookup_host() -> anyhow::Result<String> {
         let host = Self::REDIRECTOR_HOST;
 
         // Attempt to lookup using the system DNS
@@ -212,140 +131,28 @@ impl OfficialInstance {
             .json()
             .await?;
 
-        response
+        let data = response
             .answer
             .pop()
             .map(|value| value.data)
-            .ok_or(InstanceError::MissingValue)
+            .ok_or(anyhow!("Missing lookup data"))?;
+        Ok(data)
     }
 
     /// Creates a stream to the main server and wraps it with a
     /// session returning that session. Will return None if the
     /// stream failed.
-    pub async fn stream(&self) -> Result<BlazeStream, BlazeError> {
-        BlazeStream::connect((self.host.as_str(), self.port)).await
-    }
-}
+    pub async fn stream(&self) -> anyhow::Result<SslStream<TcpStream>> {
+        let connector = SslConnector::builder(SslMethod::tls_client())?.build();
+        let context = connector.into_context();
 
-/// Session implementation for a retriever client
-pub struct OfficialSession {
-    /// The ID for the next request packet
-    id: u32,
-    /// The underlying SSL / TCP stream connection
-    stream: Framed<BlazeStream, PacketCodec>,
-}
+        let ssl = Ssl::new(&context)?;
+        let stream = TcpStream::connect((self.host.as_str(), self.port)).await?;
+        let mut stream = SslStream::new(ssl, stream)?;
 
-/// Error type for retriever errors
-#[derive(Debug, Error)]
-pub enum RetrieverError {
-    /// Packet decode errror
-    #[error(transparent)]
-    Decode(#[from] DecodeError),
-    /// IO Error
-    #[error(transparent)]
-    IO(#[from] io::Error),
-    /// Error response packet
-    #[error(transparent)]
-    Packet(#[from] ErrorPacket),
-    /// Stream ended early
-    #[error("Reached end of stream")]
-    EarlyEof,
-}
+        Pin::new(&mut stream).connect().await?;
 
-pub type RetrieverResult<T> = Result<T, RetrieverError>;
-
-impl OfficialSession {
-    /// Creates a session with an official server at the provided
-    /// `host` and `port`
-    async fn connect(host: &str, port: u16) -> Result<OfficialSession, BlazeError> {
-        let stream = BlazeStream::connect((host, port)).await?;
-        Ok(Self {
-            id: 0,
-            stream: Framed::new(stream, PacketCodec),
-        })
-    }
-    /// Writes a request packet and waits until the response packet is
-    /// recieved returning the contents of that response packet.
-    pub async fn request<Req, Res>(
-        &mut self,
-        component: u16,
-        command: u16,
-        contents: Req,
-    ) -> RetrieverResult<Res>
-    where
-        Req: TdfSerialize,
-        for<'a> Res: TdfDeserialize<'a> + 'a,
-    {
-        let response = self.request_raw(component, command, contents).await?;
-        let contents = response.deserialize::<Res>()?;
-        Ok(contents)
-    }
-
-    /// Writes a request packet and waits until the response packet is
-    /// recieved returning the contents of that response packet.
-    pub async fn request_raw<Req: TdfSerialize>(
-        &mut self,
-        component: u16,
-        command: u16,
-        contents: Req,
-    ) -> RetrieverResult<Packet> {
-        let request = Packet::request(self.id, component, command, contents);
-
-        debug_log_packet(&request, "Send");
-        let frame = request.frame.clone();
-
-        self.stream.send(request).await?;
-
-        self.id += 1;
-        self.expect_response(&frame).await
-    }
-
-    /// Writes a request packet and waits until the response packet is
-    /// recieved returning the contents of that response packet. The
-    /// request will have no content
-    pub async fn request_empty<Res>(&mut self, component: u16, command: u16) -> RetrieverResult<Res>
-    where
-        for<'a> Res: TdfDeserialize<'a> + 'a,
-    {
-        let response = self.request_empty_raw(component, command).await?;
-        let contents = response.deserialize::<Res>()?;
-        Ok(contents)
-    }
-
-    /// Writes a request packet and waits until the response packet is
-    /// recieved returning the raw response packet
-    pub async fn request_empty_raw(
-        &mut self,
-        component: u16,
-        command: u16,
-    ) -> RetrieverResult<Packet> {
-        let request = Packet::request_empty(self.id, component, command);
-        debug_log_packet(&request, "Send");
-        let frame = request.frame.clone();
-        self.stream.send(request).await?;
-        self.id += 1;
-        self.expect_response(&frame).await
-    }
-
-    /// Waits for a response packet to be recieved any notification packets
-    /// that are recieved are handled in the handle_notify function.
-    async fn expect_response(&mut self, request: &FireFrame) -> RetrieverResult<Packet> {
-        loop {
-            let response = match self.stream.next().await {
-                Some(value) => value?,
-                None => return Err(RetrieverError::EarlyEof),
-            };
-            debug_log_packet(&response, "Receive");
-            let frame = &response.frame;
-
-            if let FrameType::Response = frame.ty {
-                if frame.path_matches(request) {
-                    return Ok(response);
-                }
-            } else if let FrameType::Error = frame.ty {
-                return Err(RetrieverError::Packet(ErrorPacket(response)));
-            }
-        }
+        Ok(stream)
     }
 }
 
@@ -358,19 +165,6 @@ impl OfficialSession {
 fn debug_log_packet(packet: &Packet, action: &str) {
     let debug = PacketDebug { packet };
     debug!("\nOfficial: {}\n{:?}", action, debug);
-}
-
-/// Wrapping structure for packets to allow them to be
-/// used as errors
-#[derive(Debug)]
-pub struct ErrorPacket(Packet);
-
-impl std::error::Error for ErrorPacket {}
-
-impl Display for ErrorPacket {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#X}", self.0.frame.error)
-    }
 }
 
 /// Structure for the lookup responses from the google DNS API

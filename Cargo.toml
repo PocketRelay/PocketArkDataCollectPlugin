@@ -35,6 +35,7 @@ anyhow = "1.0.76"
 openssl-sys = "0.9"
 openssl = "0.10"
 tokio-openssl = "0.6.3"
+quick-xml = { version = "0.31.0", features = ["serialize"] }
 
 [dependencies.windows-sys]
 version = "0.48"
