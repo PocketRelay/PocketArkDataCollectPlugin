@@ -1,5 +1,5 @@
 use crate::constants::HTTP_PORT;
-use hyper::body::Body;
+use hyper::body::{Body, HttpBody};
 use hyper::header::HOST;
 use hyper::service::service_fn;
 use hyper::{server::conn::Http, Request};
@@ -40,7 +40,7 @@ pub async fn start_server() {
         tokio::task::spawn(async move {
             let mut stream = SslStream::new(ssl, stream).unwrap();
 
-            Pin::new(&mut stream).accept().await;
+            Pin::new(&mut stream).accept().await.unwrap();
 
             if let Err(err) = Http::new()
                 .serve_connection(stream, service_fn(proxy_http))
@@ -52,7 +52,16 @@ pub async fn start_server() {
     }
 }
 
-async fn proxy_http(req: Request<hyper::body::Body>) -> Result<Response<Body>, Infallible> {
+async fn proxy_http(mut req: Request<hyper::body::Body>) -> Result<Response<Body>, Infallible> {
+    let body_data = req.body_mut().data().await;
+    if let Some(Ok(data)) = &body_data {
+        if let Ok(value) = String::from_utf8(data.to_vec()) {
+            debug!("UTF8: {}\n\n", value);
+        } else {
+            debug!("BINARY: {:?}", data.as_ref() as &[u8]);
+        }
+    }
+
     let path = req
         .uri()
         .path_and_query()
@@ -74,8 +83,21 @@ async fn proxy_http(req: Request<hyper::body::Body>) -> Result<Response<Body>, I
 
     debug!("Client HTTP request: {:?}", &req);
 
-    let client = Client::new();
-    let proxy_response = match client.get(target_url).send().await {
+    let client = reqwest::Client::builder()
+        .default_headers(req.headers().clone())
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+
+    let mut request = client.request(req.method().clone(), target_url);
+
+    if let Some(Ok(body_data)) = body_data {
+        request = request.body(body_data);
+    }
+
+    let proxy_response = request.send().await;
+
+    let proxy_response = match proxy_response {
         Ok(value) => value,
         Err(err) => {
             error!("Failed to send HTTP request: {}", err);
@@ -87,7 +109,11 @@ async fn proxy_http(req: Request<hyper::body::Body>) -> Result<Response<Body>, I
 
     debug!("Server HTTP response: {:?}", &proxy_response);
     let status = proxy_response.status();
-    let headers = proxy_response.headers().clone();
+    let mut headers = proxy_response.headers().clone();
+
+    // Remove headers that conflict with our responses
+    headers.remove("transfer-encoding");
+    headers.remove("content-length");
 
     let body = match proxy_response.bytes().await {
         Ok(value) => value,
@@ -98,7 +124,11 @@ async fn proxy_http(req: Request<hyper::body::Body>) -> Result<Response<Body>, I
             return Ok(error_response);
         }
     };
-    debug!("Server HTTP response body: {:?}", &body);
+    if let Ok(value) = String::from_utf8(body.to_vec()) {
+        debug!("UTF8: {}\n\n", value);
+    } else {
+        debug!("BINARY: {:?}", body.as_ref() as &[u8]);
+    }
 
     let mut response = Response::new(hyper::body::Body::from(body));
     *response.status_mut() = status;
