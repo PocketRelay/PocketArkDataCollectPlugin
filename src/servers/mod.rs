@@ -12,12 +12,7 @@ pub fn start_servers() {
         join!(
             main::start_server(),
             redirector::start_server(),
-            // Redirector
-            http::start_server(42230),
-            // Pin River
-            http::start_server(443),
-            // Certs
-            http::start_server(44325)
+            http::start_server(),
         );
     });
 }

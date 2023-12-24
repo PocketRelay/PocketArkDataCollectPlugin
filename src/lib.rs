@@ -1,5 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
+use log::debug;
 use windows_sys::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 
 use crate::servers::start_servers;
@@ -19,6 +20,9 @@ unsafe extern "system" fn DllMain(dll_module: usize, call_reason: u32, _: *mut (
             AllocConsole();
 
             logging::setup();
+
+            debug!("STARTING");
+
             servers::components::initialize();
 
             // Handles the DLL being attached to the game

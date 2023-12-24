@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use futures_util::{SinkExt, StreamExt};
 use hyper::header::CONTENT_TYPE;
 use log::{debug, error};
-use openssl::ssl::{Ssl, SslConnector, SslMethod};
+use openssl::ssl::{Ssl, SslConnector, SslMethod, SslVerifyMode};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, net::Ipv4Addr, pin::Pin};
@@ -143,7 +143,12 @@ impl OfficialInstance {
     /// session returning that session. Will return None if the
     /// stream failed.
     pub async fn stream(&self) -> anyhow::Result<SslStream<TcpStream>> {
-        let connector = SslConnector::builder(SslMethod::tls_client())?.build();
+        let mut connector = SslConnector::builder(SslMethod::tls_client())?;
+
+        connector.set_verify(SslVerifyMode::NONE);
+        connector.set_security_level(0);
+
+        let connector = connector.build();
         let context = connector.into_context();
 
         let ssl = Ssl::new(&context)?;

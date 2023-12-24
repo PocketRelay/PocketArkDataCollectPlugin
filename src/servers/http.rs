@@ -6,14 +6,19 @@ use hyper::{server::conn::Http, Request};
 use hyper::{Response, StatusCode};
 use log::{debug, error};
 use native_windows_gui::error_message;
+use openssl::ssl::Ssl;
 use reqwest::Client;
 use std::convert::Infallible;
 use std::net::Ipv4Addr;
+use std::pin::Pin;
 use tokio::net::TcpListener;
+use tokio_openssl::SslStream;
 
-pub async fn start_server(port: u16) {
+use super::redirector::create_ssl_context;
+
+pub async fn start_server() {
     // Initializing the underlying TCP listener
-    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
+    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, HTTP_PORT)).await {
         Ok(value) => value,
         Err(err) => {
             error_message("Failed to start http", &err.to_string());
@@ -21,6 +26,7 @@ pub async fn start_server(port: u16) {
             return;
         }
     };
+    let ctx = create_ssl_context();
 
     // Accept incoming connections
     loop {
@@ -29,7 +35,13 @@ pub async fn start_server(port: u16) {
             Err(_) => break,
         };
 
+        let ssl = Ssl::new(&ctx).unwrap();
+
         tokio::task::spawn(async move {
+            let mut stream = SslStream::new(ssl, stream).unwrap();
+
+            Pin::new(&mut stream).accept().await;
+
             if let Err(err) = Http::new()
                 .serve_connection(stream, service_fn(proxy_http))
                 .await

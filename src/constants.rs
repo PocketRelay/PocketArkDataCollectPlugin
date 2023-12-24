@@ -8,4 +8,4 @@ pub const MAIN_PORT: u16 = 42128;
 /// The local proxy telemetry server port
 pub const TELEMETRY_PORT: u16 = 42129;
 /// The local HTTP server port
-pub const HTTP_PORT: u16 = 42131;
+pub const HTTP_PORT: u16 = 443;

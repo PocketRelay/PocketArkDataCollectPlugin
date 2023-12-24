@@ -56,7 +56,7 @@ pub async fn start_server() {
 }
 
 /// Creates the SSL context for the redirector to use
-fn create_ssl_context() -> SslContext {
+pub fn create_ssl_context() -> SslContext {
     let crt = X509::from_der(include_bytes!("cert.der")).unwrap();
     let pkey = PKey::from_rsa(Rsa::private_key_from_pem(include_bytes!("server.key.pem")).unwrap())
         .unwrap();

@@ -94,8 +94,8 @@ const HOSTNAME_LOOKUP_PATTERN: Pattern = Pattern {
 // Zero the checks at: 0000000144C2047F
 
 pub unsafe fn hook() {
-    hook_host_lookup();
-    verify_certificate();
+    // hook_host_lookup();
+    // verify_certificate();
 }
 
 static mut LOCAL_ADDR: SOCKADDR = SOCKADDR {
@@ -119,17 +119,24 @@ pub unsafe extern "system" fn fake_getaddrinfo(
     phints: *const ADDRINFOA,
     ppresult: *mut *mut ADDRINFOA,
 ) -> i32 {
-    let hinits = &*phints;
-    let mem: ADDRINFOA = ADDRINFOA {
-        ai_flags: hinits.ai_flags,
-        ai_family: AF_INET as i32,
-        ai_socktype: hinits.ai_socktype,
-        ai_protocol: hinits.ai_protocol,
-        ai_addrlen: 4,
-        ai_canonname: null_mut(),
-        ai_addr: &mut LOCAL_ADDR,
-        ai_next: null_mut(),
-    };
+    // Derive the safe name from the str bytes
+    let nodename = CStr::from_ptr(pnodename.cast());
+    // Derive the safe name from the str bytes
+    let servicename = CStr::from_ptr(pservicename.cast());
+
+    debug!("Node: {:?}, Service: {:?}", nodename, servicename);
+
+    // let hinits = &*phints;
+    // let mem: ADDRINFOA = ADDRINFOA {
+    //     ai_flags: hinits.ai_flags,
+    //     ai_family: AF_INET as i32,
+    //     ai_socktype: hinits.ai_socktype,
+    //     ai_protocol: hinits.ai_protocol,
+    //     ai_addrlen: 4,
+    //     ai_canonname: null_mut(),
+    //     ai_addr: &mut LOCAL_ADDR,
+    //     ai_next: null_mut(),
+    // };
 
     getaddrinfo(pnodename, pservicename, phints, ppresult)
 }
@@ -139,7 +146,7 @@ unsafe fn hook_host_lookup() {
 
     Pattern::apply_with_transform(
         &HOSTNAME_LOOKUP_PATTERN,
-        4,
+        8,
         |addr| {
             // Initial -> f652b0
 
