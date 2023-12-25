@@ -1,101 +1,44 @@
-use crate::pattern::{fill_bytes, Pattern};
-use log::debug;
-use std::{
-    alloc::{alloc, Layout},
-    ffi::{CStr, CString},
-    mem::size_of,
-    ptr::{addr_of, null_mut},
-};
+use log::{debug, error, warn};
+use std::{ffi::CStr, mem::size_of, ptr::null_mut};
 use windows_sys::{
     core::PCSTR,
-    Win32::Networking::WinSock::{
-        getaddrinfo, gethostbyname, ADDRINFOA, AF_INET, HOSTENT, SOCKADDR,
+    Win32::{
+        Foundation::{GetLastError, FALSE},
+        Networking::WinSock::{getaddrinfo, ADDRINFOA, AF_INET, SOCKADDR},
+        System::Memory::{VirtualProtect, PAGE_PROTECTION_FLAGS, PAGE_READWRITE},
     },
 };
 
-const VERIFY_CERTIFICATE_PATTERN: Pattern = Pattern {
-    name: "VerifyCertificate",
-    start: 0x0000000140100000,
-    end: 0x0000000200000000,
-    mask: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\
-    ????xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx????xxxx????xxxxxxxxxxxxxxxxxxxxxxx?????\
-    xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx????xxxx????xxxxxxxxxxxxxxxx????xxxxxxxxxxxxxxxxxxxx\
-    xxxxxxxxxxxxxxxx????xxxx????xxxxxxxxxxx?????xxxxxxxx????xxxxxx?????xxxxxxxx????xxxx????xxxx\
-    xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?????x????xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx????xxxxxxxx\
-    xxxxxxxxxxxxx????xxxxxxxxxxxxxxxxxx????xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx????xxxx\
-    xxxxxxxxxxxxxxxxxxxxxxxxxxxxx????xxxxxxxxxxxxxxxxxx",
-    op: &[
-        0x48, 0x89, 0x5C, 0x24, 0x08, 0x44, 0x88, 0x44, 0x24, 0x18, 0x55, 0x56, 0x57, 0x48, 0x83,
-        0xEC, 0x30, 0x33, 0xED, 0x41, 0x0F, 0xB6, 0xC0, 0x48, 0x8B, 0xFA, 0x48, 0x8B, 0xF1, 0x89,
-        0x6C, 0x24, 0x68, 0x41, 0x80, 0xF8, 0x01, 0x75, 0x5C, 0x48, 0x8D, 0x8A, 0xC0, 0x01, 0x00,
-        0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x85, 0xC0, 0x75, 0x47, 0x8B, 0x87, 0x10, 0x08, 0x00,
-        0x00, 0x44, 0x8B, 0x8F, 0x0C, 0x06, 0x00, 0x00, 0x48, 0x8D, 0x8F, 0x14, 0x08, 0x00, 0x00,
-        0x89, 0x44, 0x24, 0x28, 0x48, 0x89, 0x4C, 0x24, 0x20, 0x4C, 0x8D, 0x87, 0x10, 0x06, 0x00,
-        0x00, 0x48, 0x8B, 0xCE, 0x48, 0x8B, 0xD7, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x85, 0xC0, 0x0F,
-        0x84, 0x00, 0x00, 0x00, 0x00, 0x8D, 0x45, 0xCE, 0x48, 0x8B, 0x5C, 0x24, 0x50, 0x48, 0x83,
-        0xC4, 0x30, 0x5F, 0x5E, 0x5D, 0xC3, 0x0F, 0xB6, 0x44, 0x24, 0x60, 0x48, 0x8D, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00, 0x84, 0xC0, 0x75, 0x0D, 0x83, 0xBF,
-        0x24, 0x08, 0x00, 0x00, 0x00, 0x75, 0x04, 0x33, 0xC0, 0xEB, 0x05, 0xB8, 0x01, 0x00, 0x00,
-        0x00, 0x44, 0x0F, 0xB6, 0xC0, 0x48, 0x8B, 0xD7, 0x48, 0x8B, 0xCB, 0xE8, 0x00, 0x00, 0x00,
-        0x00, 0x85, 0xC0, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x44, 0x8B, 0x8B, 0xC4, 0x01, 0x00,
-        0x00, 0x44, 0x3B, 0x8F, 0x04, 0x04, 0x00, 0x00, 0x0F, 0x85, 0x00, 0x00, 0x00, 0x00, 0x8B,
-        0x83, 0xD0, 0x01, 0x00, 0x00, 0x4C, 0x8B, 0x83, 0xC8, 0x01, 0x00, 0x00, 0x48, 0x8D, 0x8B,
-        0xD4, 0x01, 0x00, 0x00, 0x89, 0x44, 0x24, 0x28, 0x48, 0x89, 0x4C, 0x24, 0x20, 0x48, 0x8B,
-        0xD7, 0x48, 0x8B, 0xCE, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x85, 0xC0, 0x0F, 0x85, 0x00, 0x00,
-        0x00, 0x00, 0xF6, 0x83, 0xC0, 0x01, 0x00, 0x00, 0x01, 0x74, 0x52, 0x48, 0x8D, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x48, 0x8D, 0x8F, 0x40, 0x03, 0x00, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00,
-        0x85, 0xC0, 0x74, 0x1B, 0x48, 0x8D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8D, 0x8F, 0x40,
-        0x03, 0x00, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x85, 0xC0, 0x0F, 0x85, 0x00, 0x00, 0x00,
-        0x00, 0x8B, 0x6C, 0x24, 0x68, 0x48, 0x85, 0xF6, 0x74, 0x17, 0x48, 0x8B, 0x86, 0x70, 0x01,
-        0x00, 0x00, 0x80, 0xB8, 0x98, 0x00, 0x00, 0x00, 0x00, 0x74, 0x07, 0xC6, 0x80, 0x98, 0x00,
-        0x00, 0x00, 0x00, 0x48, 0x8D, 0x8F, 0x40, 0x03, 0x00, 0x00, 0x48, 0x8D, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x85, 0xC0, 0x75, 0x09, 0xF6, 0x83, 0xC0, 0x01,
-        0x00, 0x00, 0x02, 0x74, 0x58, 0x48, 0x8B, 0x93, 0xF0, 0x01, 0x00, 0x00, 0x48, 0x85, 0xD2,
-        0x74, 0x75, 0x41, 0xB0, 0x01, 0x48, 0x8B, 0xCE, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x8B, 0xE8,
-        0x89, 0x44, 0x24, 0x68, 0x85, 0xC0, 0x74, 0x49, 0x48, 0x8B, 0x93, 0xF0, 0x01, 0x00, 0x00,
-        0x48, 0x8B, 0xCE, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x9B, 0xF8, 0x01, 0x00, 0x00,
-        0x48, 0x85, 0xDB, 0x74, 0x54, 0x0F, 0xB6, 0x44, 0x24, 0x60, 0xE9, 0x00, 0x00, 0x00, 0x00,
-        0xB8, 0x9C, 0xFF, 0xFF, 0xFF, 0x48, 0x8B, 0x5C, 0x24, 0x50, 0x48, 0x83, 0xC4, 0x30, 0x5F,
-        0x5E, 0x5D, 0xC3, 0xB8, 0x9A, 0xFF, 0xFF, 0xFF, 0x48, 0x8B, 0x5C, 0x24, 0x50, 0x48, 0x83,
-        0xC4, 0x30, 0x5F, 0x5E, 0x5D, 0xC3, 0x48, 0x8B, 0x8B, 0xF0, 0x01, 0x00, 0x00, 0xE8, 0x00,
-        0x00, 0x00, 0x00, 0x48, 0xC7, 0x83, 0xF0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8B,
-        0xC5, 0x48, 0x8B, 0x5C, 0x24, 0x50, 0x48, 0x83, 0xC4, 0x30, 0x5F, 0x5E, 0x5D, 0xC3, 0x48,
-        0x8B, 0xD7, 0x48, 0x8B, 0xCE, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x5C, 0x24, 0x50,
-        0xB8, 0xCD, 0xFF, 0xFF, 0xFF, 0x48, 0x83, 0xC4, 0x30, 0x5F, 0x5E, 0x5D, 0xC3,
-    ],
-};
+/// Address to start matching from
+const HOST_LOOKUP_START_OFFSET: usize = 0x0000000140100000;
+/// Address to end matching at
+const HOST_LOOKUP_END_OFFSET: usize = 0x0000000200000000;
+/// Mask to use while matching the opcodes below
+const HOST_LOOKUP_MASK: &str = "xx????xxxxxxxxxxxxxxxxx";
+/// Op codes to match against
+const HOST_LOOKUP_OP_CODES: &[u8] = &[
+    0xFF, 0x15, 0x10, 0x09, 0xE9, 0x01, // call   QWORD PTR [rip+0x1e90910]
+    0x85, 0xC0, // test eax,eax
+    0x75, 0x52, // jne  0x5c
+    0x48, 0x8B, 0x44, 0x24, 0x68, // mov rax,QWORD PTR [rsp+0x68]
+    0x48, 0x8D, 0x53, 0x18, // lea rdx, [rbx+0x18]
+    0x4C, 0x8B, 0x40, 0x20, // mov r8, QWORD PTR [rax+0x20]
+];
 
-/// TODO: ANDROMEDA USES getaddrinfo
-const HOSTNAME_LOOKUP_PATTERN: Pattern = Pattern {
-    name: "getaddrinfo",
-    start: 0x0000000140100000,
-    end: 0x0000000200000000,
-    mask: "xx????xxxxxxxxxxxxxxxxx",
-    op: &[
-        0xFF, 0x15, 0x10, 0x09, 0xE9, 0x01, //   call   QWORD PTR [rip+0x1e90910]
-        0x85, 0xC0, //  test   eax,eax
-        0x75, 0x52, //  jne    0x5c
-        0x48, 0x8B, 0x44, 0x24, 0x68, // mov    rax,QWORD PTR [rsp+0x68]
-        0x48, 0x8D, 0x53, 0x18, //  lea    rdx,[rbx+0x18]
-        0x4C, 0x8B, 0x40, 0x20, // mov    r8,QWORD PTR [rax+0x20]
-    ],
-};
-
-// Zero the checks at: 0000000144C2047F
-
-pub unsafe fn hook() {
-    hook_host_lookup();
-    // verify_certificate();
-}
-
+/// Collection of addresses that should be redirected to localhost
+/// (Addresses used by the game for various traffic)
 static mut REDIRECT_ADDRESSES: &[&str] = &[
+    // Redirector
     "winter15.gosredirector.ea.com",
+    // Game Server
     "gsprodblapp-03.ea.com",
+    // Certificate server?
     "gosca.ea.com",
     "ec2-54-84-48-229.compute-1.amazonaws.com",
     "mea-public.biowareonline.net",
     "pin-river.data.ea.com",
     "pin-em.data.ea.com",
+    // QoS servers
     "qos-prod-bio-dub-common-common.gos.ea.com",
     "qos-prod-bio-iad-common-common.gos.ea.com",
     "qos-prod-bio-sjc-common-common.gos.ea.com",
@@ -103,6 +46,14 @@ static mut REDIRECT_ADDRESSES: &[&str] = &[
     "qos-prod-m3d-brz-common-common.gos.ea.com",
     "qos-prod-m3d-nrt-common-common.gos.ea.com",
 ];
+
+/// Allocates the provided object on the heap, leaking it
+/// immedately. Used by `fake_getaddrinfo` since the `freeaddrinfo`
+/// function takes care of cleaning up the allocated memory
+#[inline]
+fn heap_alloc<T>(value: T) -> &'static mut T {
+    Box::leak(Box::new(value))
+}
 
 #[no_mangle]
 pub unsafe extern "system" fn fake_getaddrinfo(
@@ -113,7 +64,7 @@ pub unsafe extern "system" fn fake_getaddrinfo(
 ) -> i32 {
     // Derive the safe name from the str bytes
     let nodename = CStr::from_ptr(pnodename.cast());
-    debug!("Lookup for: {:?}", nodename);
+    debug!("Host lookup: {:?}", nodename);
 
     // Check it against the redirected addresses
     for address in REDIRECT_ADDRESSES {
@@ -122,82 +73,149 @@ pub unsafe extern "system" fn fake_getaddrinfo(
 
             let hinits = &*phints;
 
-            let addr = Box::leak(Box::new(SOCKADDR {
+            // Create the socket address
+            let addr = heap_alloc(SOCKADDR {
                 sa_family: AF_INET,
                 sa_data: [0, 0, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-            }));
+            });
 
-            let addr_info = Box::leak(Box::new(ADDRINFOA {
+            // Create the address info response
+            let addr_info = heap_alloc(ADDRINFOA {
                 ai_flags: 0,
                 ai_family: AF_INET as i32,
                 ai_socktype: hinits.ai_socktype,
                 ai_protocol: hinits.ai_protocol,
-                ai_addrlen: 16,
+                ai_addrlen: std::mem::size_of::<SOCKADDR>(),
                 ai_canonname: null_mut(),
                 ai_addr: addr,
                 ai_next: null_mut(),
-            }));
+            });
 
+            // Set the result
             *ppresult = addr_info;
 
             return 0;
         }
     }
 
+    // Fallback to default implementation
     getaddrinfo(pnodename, pservicename, phints, ppresult)
 }
 
-unsafe fn hook_host_lookup() {
-    // TODO: THIS NEEDS TO BE REPLACED WITH `fake_getaddrinfo`
+/// Hooks the `getaddrinfo` function to handle replacing host
+/// lookups with localhost for hijacking requests.
+///
+/// Last known address (In decrypted copy): 00 00 7F FE B6 5C 3C E0
+pub unsafe fn hook_host_lookup() {
+    // Attempt to find the calling pattern
+    let Some(addr) = find_pattern(
+        HOST_LOOKUP_START_OFFSET,
+        HOST_LOOKUP_END_OFFSET,
+        HOST_LOOKUP_MASK,
+        HOST_LOOKUP_OP_CODES,
+    ) else {
+        warn!("Failed to find getaddrinfo call hook position");
+        return;
+    };
 
-    // address of actual 00 00 7F FE B6 5C 3C E0
-    // E0 3C 5C B6 FE 7F 00 00
+    debug!("Found getaddrinfo call @ {:#016x}", addr as usize);
 
-    Pattern::apply_with_transform(
-        &HOSTNAME_LOOKUP_PATTERN,
-        size_of::<usize>(),
-        |addr| {
-            // Initial -> f652b0
+    // Find the relative jump distance
+    let distance = *(addr.add(2 /* Skip call opcode */) as *const u32);
 
-            debug!("Pre distance {}", addr as usize);
+    // Get a pointer to the value in the thunk table (Points to the actual function address)
+    let thunk_addr = addr.add(6 /* Skip call opcode + address */ + distance as usize);
 
-            // == Obtain the address from the call ????
-            // call ???? (Obtain the relative call distance)
-            let distance = *(addr.add(2 /* Skip call opcode */) as *const u32);
-
-            debug!("Post distance");
-
-            // Relative jump -> EEF240 (jump to jmp in thunk table)
-            let jmp_address = addr.add(6 /* Skip call opcode + address */ + distance as usize);
-
-            jmp_address
-        },
-        |addr| {
-            // Replace the address with our faker function
-            let ptr: *mut usize = addr as *mut usize;
-            *ptr = fake_getaddrinfo as usize;
-        },
-    );
+    use_memory(thunk_addr, size_of::<usize>(), |addr| {
+        // Replace the address with our faker function
+        let ptr: *mut usize = addr as *mut usize;
+        *ptr = fake_getaddrinfo as usize;
+    });
 }
 
-/// Finds and hooks the VerifyCertificate function replacing it with
-/// something that will always return zero aka the success value
-unsafe fn verify_certificate() {
-    Pattern::apply(&VERIFY_CERTIFICATE_PATTERN, 16, |addr| {
-        // Replacement opcodes for just returning always zero
-        let new_ops: [u8; 9] = [
-            0xb8, 0x0, 0x0, 0x0, 0x0,  // mov eax, 0
-            0xc3, // ret
-            0x90, // nop
-            0x90, // nop
-            0x90, // nop
-        ];
+/// Compares the opcodes after the provided address using the provided
+/// opcode and pattern
+///
+/// ## Safety
+///
+/// Reading program memory is *NOT* safe but its required for pattern matching
+///
+/// ## Arguments
+/// * addr     - The address to start matching from
+/// * mask     - The mask to use when matching opcodes
+/// * op_codes - The op codes to match against
+unsafe fn compare_mask(addr: *const u8, mask: &'static str, op_codes: &'static [u8]) -> bool {
+    mask.chars()
+        .enumerate()
+        // Merge the iterator with the opcodes for matching
+        .zip(op_codes.iter().copied())
+        // Compare the mask and memory at the address with the op codes
+        .all(|((offset, mask), op)| mask == '?' || *addr.add(offset) == op)
+}
 
-        // Iterate the opcodes and write them to the ptr
-        let mut op_ptr: *mut u8 = addr;
-        for op in new_ops {
-            *op_ptr = op;
-            op_ptr = op_ptr.add(1);
-        }
-    });
+/// Attempts to find a matching pattern anywhere between the start and
+/// end offsets
+///
+/// ## Safety
+///
+/// Reading program memory is *NOT* safe but its required for pattern matching
+///
+/// ## Arguments
+/// * start_offset - The address to start matching from
+/// * end_offset   - The address to stop matching at
+/// * mask         - The mask to use when matching opcodes
+/// * op_codes     - The op codes to match against
+unsafe fn find_pattern(
+    start_offset: usize,
+    end_offset: usize,
+    mask: &'static str,
+    op_codes: &'static [u8],
+) -> Option<*const u8> {
+    // Iterate between the offsets
+    (start_offset..=end_offset)
+        // Cast the address to a pointer type
+        .map(|addr| addr as *const u8)
+        // Compre the mask at the provided address
+        .find(|addr| compare_mask(*addr, mask, op_codes))
+}
+
+/// Attempts to apply virtual protect READ/WRITE access
+/// over the memory at the provided address for the length
+/// provided. Restores the original flags after the action
+/// is complete
+///
+/// ## Safety
+///
+/// This function acquires the proper write permissions over
+/// `addr` for the required `length` but it is unsound if
+/// memory past `length` is accessed
+///
+/// ## Arguments
+/// * addr - The address to protect
+/// * length - The protected region
+/// * action - The aciton to execute on the memory
+#[inline]
+unsafe fn use_memory<F, P>(addr: *const P, length: usize, action: F)
+where
+    F: FnOnce(*mut P),
+{
+    // Tmp variable to store the old state
+    let mut old_protect: PAGE_PROTECTION_FLAGS = 0;
+
+    // Apply the new read write flags
+    if VirtualProtect(addr.cast(), length, PAGE_READWRITE, &mut old_protect) == FALSE {
+        let error = GetLastError();
+
+        error!(
+            "Failed to protect memory region @ {:#016x} length {} error: {:#4x}",
+            addr as usize, length, error
+        );
+        return;
+    }
+
+    // Apply the action on the now mutable memory area
+    action(addr.cast_mut());
+
+    // Restore the original flags
+    VirtualProtect(addr.cast(), length, old_protect, &mut old_protect);
 }

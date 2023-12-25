@@ -1,13 +1,11 @@
 #![allow(clippy::missing_safety_doc)]
 
-use windows_sys::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
-
 use crate::servers::start_servers;
+use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 
 pub mod constants;
 pub mod hooks;
 pub mod logging;
-pub mod pattern;
 pub mod servers;
 
 #[no_mangle]
@@ -17,8 +15,8 @@ unsafe extern "system" fn DllMain(dll_module: usize, call_reason: u32, _: *mut (
         logging::setup();
         servers::components::initialize();
 
-        // Handles the DLL being attached to the game
-        unsafe { hooks::hook() };
+        // Applies the host lookup hook
+        unsafe { hooks::hook_host_lookup() };
 
         // Spawn UI and prepare task set
         std::thread::spawn(|| {
