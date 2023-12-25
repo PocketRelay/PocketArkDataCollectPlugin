@@ -1,80 +1,85 @@
-use crate::constants::{MAIN_PORT, REDIRECTOR_PORT};
-use hyper::body::Body;
-use hyper::header::{HeaderName, HeaderValue, CONTENT_TYPE};
-use hyper::service::service_fn;
-use hyper::{server::conn::Http, Request};
-use hyper::{HeaderMap, Response, StatusCode};
-use log::error;
-use native_windows_gui::error_message;
-use openssl::pkey::PKey;
-use openssl::rsa::Rsa;
-use openssl::ssl::{Ssl, SslContext, SslMethod, SslVersion};
-use openssl::x509::X509;
+use anyhow::Context;
+use hyper::{
+    body::Body,
+    header::{HeaderValue, CONTENT_TYPE},
+    server::conn::Http,
+    service::service_fn,
+    HeaderMap, Request, Response, StatusCode,
+};
 
-use std::convert::Infallible;
-use std::net::Ipv4Addr;
-use std::pin::Pin;
-use tokio::net::TcpListener;
+use log::error;
+use openssl::{
+    pkey::PKey,
+    rsa::Rsa,
+    ssl::{Ssl, SslContext, SslMethod, SslVersion},
+    x509::X509,
+};
+use std::{convert::Infallible, net::Ipv4Addr, pin::Pin};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_openssl::SslStream;
 
-/// winter15.gosredirector.ea.com
-pub async fn start_server() {
-    // Initializing the underlying TCP listener
-    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, REDIRECTOR_PORT)).await {
-        Ok(value) => value,
-        Err(err) => {
-            error_message("Failed to start redirector", &err.to_string());
-            error!("Failed to start redirector: {}", err);
-            return;
-        }
-    };
+use super::main::MAIN_PORT;
 
-    let ctx = create_ssl_context();
+/// The local redirector server port
+pub const REDIRECTOR_PORT: u16 = 42230;
+
+/// winter15.gosredirector.ea.com
+pub async fn start_server() -> anyhow::Result<()> {
+    // Initializing the underlying TCP listener
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, REDIRECTOR_PORT))
+        .await
+        .context("Failed to bind listener")?;
+
+    // Create SSL context
+    let ctx = create_ssl_context().context("Failed to setup ssl context")?;
 
     // Accept incoming connections
     loop {
-        let (stream, _) = match listener.accept().await {
-            Ok(value) => value,
-            Err(_) => break,
-        };
+        let (stream, _) = listener
+            .accept()
+            .await
+            .context("Failed to accept connection")?;
 
-        let ssl = Ssl::new(&ctx).unwrap();
-        let stream = SslStream::new(ssl, stream).unwrap();
+        let ssl = Ssl::new(&ctx).context("Failed to get ssl instance")?;
+        let stream = SslStream::new(ssl, stream).context("Failed to create ssl stream")?;
 
         tokio::task::spawn(async move {
-            let mut stream = stream;
-            Pin::new(&mut stream).accept().await.unwrap();
-
-            if let Err(err) = Http::new()
-                .serve_connection(stream, service_fn(handle_redirect))
-                .await
-            {
-                eprintln!("Failed to serve http connection: {:?}", err);
+            if let Err(err) = serve_connection(stream).await {
+                error!("Failed to serve redirector connection: {:?}", err);
             }
         });
     }
 }
 
+/// Handles serving an HTTP connection the provided `stream`, also
+/// completes the accept stream process
+pub async fn serve_connection(mut stream: SslStream<TcpStream>) -> anyhow::Result<()> {
+    Pin::new(&mut stream).accept().await?;
+
+    Http::new()
+        .serve_connection(stream, service_fn(handle_redirect))
+        .await
+        .context("Serve error")?;
+
+    Ok(())
+}
+
 /// Creates the SSL context for the redirector to use
-pub fn create_ssl_context() -> SslContext {
-    let crt = X509::from_der(include_bytes!("cert.der")).unwrap();
-    let pkey = PKey::from_rsa(Rsa::private_key_from_pem(include_bytes!("server.key.pem")).unwrap())
-        .unwrap();
+pub fn create_ssl_context() -> anyhow::Result<SslContext> {
+    let crt = X509::from_der(include_bytes!("cert.der"))?;
+    let pkey = PKey::from_rsa(Rsa::private_key_from_pem(include_bytes!("server.key.pem"))?)?;
 
-    let mut builder = SslContext::builder(SslMethod::tls_server()).unwrap();
-    builder.set_certificate(&crt).unwrap();
-    builder.set_private_key(&pkey).unwrap();
-    builder
-        .set_min_proto_version(Some(SslVersion::TLS1_2))
-        .unwrap();
-    builder
-        .set_max_proto_version(Some(SslVersion::TLS1_2))
-        .unwrap();
+    let mut builder = SslContext::builder(SslMethod::tls_server())?;
+    builder.set_certificate(&crt)?;
+    builder.set_private_key(&pkey)?;
+    builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
+    builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 
-    builder.build()
+    Ok(builder.build())
 }
 
 async fn handle_redirect(req: Request<hyper::body::Body>) -> Result<Response<Body>, Infallible> {
+    // Handle unexpected requests
     if req.uri().path() != "/redirector/getServerInstance" {
         let mut response = Response::new(hyper::body::Body::empty());
         *response.status_mut() = StatusCode::NOT_FOUND;

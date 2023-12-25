@@ -1,55 +1,59 @@
-use crate::constants::HTTP_PORT;
-use hyper::body::{Body, HttpBody};
-use hyper::header::HOST;
-use hyper::service::service_fn;
-use hyper::{server::conn::Http, Request};
-use hyper::{Response, StatusCode};
+use super::redirector::create_ssl_context;
+use anyhow::Context;
+use hyper::{
+    body::{Body, HttpBody},
+    header::HOST,
+    server::conn::Http,
+    service::service_fn,
+    Request, Response, StatusCode,
+};
 use log::{debug, error};
-use native_windows_gui::error_message;
 use openssl::ssl::Ssl;
-use reqwest::Client;
-use std::convert::Infallible;
-use std::net::Ipv4Addr;
-use std::pin::Pin;
-use tokio::net::TcpListener;
+use std::{convert::Infallible, net::Ipv4Addr, pin::Pin};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_openssl::SslStream;
 
-use super::redirector::create_ssl_context;
+/// The local HTTP server port
+pub const HTTPS_PORT: u16 = 443;
 
-pub async fn start_server() {
+pub async fn start_server() -> anyhow::Result<()> {
     // Initializing the underlying TCP listener
-    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, HTTP_PORT)).await {
-        Ok(value) => value,
-        Err(err) => {
-            error_message("Failed to start http", &err.to_string());
-            error!("Failed to start http: {}", err);
-            return;
-        }
-    };
-    let ctx = create_ssl_context();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, HTTPS_PORT))
+        .await
+        .context("Failed to bind http listener")?;
+
+    // Create SSL context
+    let ctx = create_ssl_context().context("Failed to setup ssl context")?;
 
     // Accept incoming connections
     loop {
-        let (stream, _) = match listener.accept().await {
-            Ok(value) => value,
-            Err(_) => break,
-        };
+        let (stream, _) = listener
+            .accept()
+            .await
+            .context("Failed to accept connection")?;
 
-        let ssl = Ssl::new(&ctx).unwrap();
+        let ssl = Ssl::new(&ctx).context("Failed to get ssl instance")?;
+        let stream = SslStream::new(ssl, stream).context("Failed to create ssl stream")?;
 
         tokio::task::spawn(async move {
-            let mut stream = SslStream::new(ssl, stream).unwrap();
-
-            Pin::new(&mut stream).accept().await.unwrap();
-
-            if let Err(err) = Http::new()
-                .serve_connection(stream, service_fn(proxy_http))
-                .await
-            {
-                eprintln!("Failed to serve http connection: {:?}", err);
+            if let Err(err) = serve_connection(stream).await {
+                error!("Failed to serve http connection: {:?}", err);
             }
         });
     }
+}
+
+/// Handles serving an HTTP connection the provided `stream`, also
+/// completes the accept stream process
+pub async fn serve_connection(mut stream: SslStream<TcpStream>) -> anyhow::Result<()> {
+    Pin::new(&mut stream).accept().await?;
+
+    Http::new()
+        .serve_connection(stream, service_fn(proxy_http))
+        .await
+        .context("Serve error")?;
+
+    Ok(())
 }
 
 async fn proxy_http(mut req: Request<hyper::body::Body>) -> Result<Response<Body>, Infallible> {

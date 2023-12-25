@@ -281,7 +281,7 @@ impl<'a> Debug for PacketDebug<'a> {
         writeln!(f, "Unused: {}", &header.unused)?;
 
         if !self.packet.pre_msg.is_empty() {
-            let mut r = TdfDeserializer::new(&self.packet.pre_msg);
+            let r = TdfDeserializer::new(&self.packet.pre_msg);
             let mut out = String::new();
 
             out.push_str("{\n");
@@ -299,7 +299,7 @@ impl<'a> Debug for PacketDebug<'a> {
             writeln!(f, "Pre Message: {}", out)?;
         }
 
-        let mut r = TdfDeserializer::new(&self.packet.contents);
+        let r = TdfDeserializer::new(&self.packet.contents);
         let mut out = String::new();
 
         let mut s = TdfStringifier::new(r, &mut out);

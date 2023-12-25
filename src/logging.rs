@@ -10,9 +10,6 @@ use log4rs::{
 /// The pattern to use when logging
 const LOGGING_PATTERN: &str = "[{d} {h({l})} {M}] {m}{n}";
 
-/// Log file name
-pub const LOG_FILE_NAME: &str = "dump/server.log";
-
 /// Setup function for setting up the Log4rs logging configuring it
 /// for all the different modules and and setting up file and stdout logging
 pub fn setup() {

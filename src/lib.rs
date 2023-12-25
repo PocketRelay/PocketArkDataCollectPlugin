@@ -3,10 +3,12 @@
 use crate::servers::start_servers;
 use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 
-pub mod constants;
 pub mod hooks;
 pub mod logging;
 pub mod servers;
+
+/// Constant storing the application version
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
