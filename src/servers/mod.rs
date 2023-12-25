@@ -1,7 +1,6 @@
 use log::error;
 use native_windows_gui::error_message;
 
-pub mod components;
 pub mod http;
 pub mod main;
 pub mod packet;

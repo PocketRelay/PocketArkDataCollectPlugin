@@ -8,8 +8,7 @@ use bitflags::bitflags;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use std::{fmt::Debug, hash::Hash};
-use tdf::types::bytes::serialize_bytes;
-use tdf::{DecodeResult, TdfDeserialize, TdfDeserializer, TdfSerialize, TdfStringifier};
+use tdf::{TdfDeserializer, TdfStringifier};
 use tokio_util::codec::{Decoder, Encoder};
 
 bitflags! {
@@ -32,44 +31,6 @@ pub struct FireFrame2 {
     pub unused: u8,
 }
 
-impl FireFrame2 {
-    pub const fn notify(component: u16, command: u16) -> Self {
-        Self {
-            component,
-            command,
-            seq: 0,
-            flags: FrameFlags::FLAG_NOTIFY,
-            notify: 0,
-            unused: 0,
-        }
-    }
-
-    pub const fn request(seq: u32, component: u16, command: u16) -> Self {
-        Self {
-            component,
-            command,
-            seq,
-            flags: FrameFlags::FLAG_DEFAULT,
-            notify: 0,
-            unused: 0,
-        }
-    }
-
-    pub const fn response(&self) -> Self {
-        let mut header = *self;
-        header.flags = header.flags.union(FrameFlags::FLAG_RESPONSE);
-        header
-    }
-
-    /// Checks if the component and command of this packet header matches
-    /// that of the other packet header
-    ///
-    /// `other` The packet header to compare to
-    pub fn path_matches(&self, other: &FireFrame2) -> bool {
-        self.component.eq(&other.component) && self.command.eq(&other.command)
-    }
-}
-
 /// Structure for Blaze packets contains the contents of the packet
 /// and the header for identification.
 ///
@@ -83,90 +44,6 @@ pub struct Packet {
 }
 
 impl Packet {
-    pub const fn new(header: FireFrame2, pre_msg: Bytes, contents: Bytes) -> Self {
-        Self {
-            frame: header,
-            pre_msg,
-            contents,
-        }
-    }
-
-    #[inline]
-    pub const fn new_empty(header: FireFrame2) -> Self {
-        Self::new(header, Bytes::new(), Bytes::new())
-    }
-
-    #[inline]
-    pub const fn new_request(seq: u32, component: u16, command: u16, contents: Bytes) -> Packet {
-        Self::new(
-            FireFrame2::request(seq, component, command),
-            Bytes::new(),
-            contents,
-        )
-    }
-
-    #[inline]
-    pub const fn new_response(packet: &Packet, contents: Bytes) -> Self {
-        Self::new(packet.frame.response(), Bytes::new(), contents)
-    }
-
-    #[inline]
-    pub const fn new_notify(component: u16, command: u16, contents: Bytes) -> Packet {
-        Self::new(
-            FireFrame2::notify(component, command),
-            Bytes::new(),
-            contents,
-        )
-    }
-
-    #[inline]
-    pub const fn request_empty(seq: u32, component: u16, command: u16) -> Packet {
-        Self::new_empty(FireFrame2::request(seq, component, command))
-    }
-
-    #[inline]
-    pub const fn response_empty(packet: &Packet) -> Self {
-        Self::new_empty(packet.frame.response())
-    }
-
-    #[inline]
-    pub const fn notify_empty(component: u16, command: u16) -> Packet {
-        Self::new_empty(FireFrame2::notify(component, command))
-    }
-
-    #[inline]
-    pub fn response<V>(packet: &Packet, contents: V) -> Self
-    where
-        V: TdfSerialize,
-    {
-        Self::new_response(packet, serialize_bytes(&contents))
-    }
-
-    #[inline]
-    pub fn notify<V>(component: u16, command: u16, contents: V) -> Packet
-    where
-        V: TdfSerialize,
-    {
-        Self::new_notify(component, command, serialize_bytes(&contents))
-    }
-
-    #[inline]
-    pub fn request<V>(seq: u32, component: u16, command: u16, contents: V) -> Packet
-    where
-        V: TdfSerialize,
-    {
-        Self::new_request(seq, component, command, serialize_bytes(&contents))
-    }
-
-    /// Attempts to deserialize the packet contents as the provided type
-    pub fn deserialize<'de, V>(&'de self) -> DecodeResult<V>
-    where
-        V: TdfDeserialize<'de>,
-    {
-        let mut r = TdfDeserializer::new(&self.contents);
-        V::deserialize(&mut r)
-    }
-
     /// Attempts to read a packet from the provided
     /// bytes source
     ///
@@ -181,6 +58,7 @@ impl Packet {
         let component = src.get_u16();
         let command = src.get_u16();
         let mut seq = [0u8; 4];
+
         src.take(3).copy_to_slice(&mut seq[1..]);
         let seq = u32::from_be_bytes(seq);
         let mty = src.get_u8();

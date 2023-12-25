@@ -15,7 +15,6 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 unsafe extern "system" fn DllMain(dll_module: usize, call_reason: u32, _: *mut ()) -> bool {
     if call_reason == DLL_PROCESS_ATTACH {
         logging::setup();
-        servers::components::initialize();
 
         // Applies the host lookup hook
         unsafe { hooks::hook_host_lookup() };
