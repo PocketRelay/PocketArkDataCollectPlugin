@@ -19,7 +19,8 @@ pub fn setup() {
         .expect("Failed to get document dir")
         .join("pocket-ark-dump.log");
 
-    std::env::set_var("RUST_LOG", "debug");
+    unsafe { std::env::set_var("RUST_LOG", "debug") };
+
     // Create logging appenders
     let pattern = Box::new(PatternEncoder::new(LOGGING_PATTERN));
     let console = Box::new(ConsoleAppender::builder().encoder(pattern.clone()).build());

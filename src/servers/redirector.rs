@@ -66,12 +66,22 @@ pub async fn serve_connection(mut stream: SslStream<TcpStream>) -> anyhow::Resul
 
 /// Creates the SSL context for the redirector to use
 pub fn create_ssl_context() -> anyhow::Result<SslContext> {
-    let crt = X509::from_der(include_bytes!("cert.der"))?;
-    let pkey = PKey::from_rsa(Rsa::private_key_from_pem(include_bytes!("server.key.pem"))?)?;
+    const CERTIFICATE_BYTES: &[u8] = include_bytes!("../../certs/winter15.crt");
+    const PRIVATE_KEY_BYTES: &[u8] = include_bytes!("../../certs/winter15.key");
 
-    let mut builder = SslContext::builder(SslMethod::tls_server())?;
-    builder.set_certificate(&crt)?;
-    builder.set_private_key(&pkey)?;
+    let certificate = X509::from_pem(CERTIFICATE_BYTES).context("Failed to load certificate")?;
+    let private_key =
+        Rsa::private_key_from_pem(PRIVATE_KEY_BYTES).context("Failed to load private key")?;
+    let private_key = PKey::from_rsa(private_key).context("Failed to create private key")?;
+
+    let mut builder =
+        SslContext::builder(SslMethod::tls_server()).context("Failed to create ssl context")?;
+
+    // Set the certificate and private key
+    builder.set_certificate(&certificate)?;
+    builder.set_private_key(&private_key)?;
+
+    // Ensure the server uses TLSv1.2
     builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
     builder.set_max_proto_version(Some(SslVersion::TLS1_2))?;
 

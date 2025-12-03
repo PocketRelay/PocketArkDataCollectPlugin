@@ -32,9 +32,8 @@ bitflags = "2.4.0"
 directories = "5.0.1"
 anyhow = "1.0.76"
 
-openssl-sys = "0.9"
-openssl = "0.10"
-tokio-openssl = "0.6.3"
+openssl = { version = "0.10", features = ["vendored"] }
+tokio-openssl = "0.6.5"
 quick-xml = { version = "0.31.0", features = ["serialize"] }
 
 [dependencies.windows-sys]
@@ -66,7 +65,7 @@ features = [
 version = "1.0.13"
 
 
-# Logging provider 
+# Logging provider
 [dependencies.log4rs]
 version = "1.2.0"
 default-features = false
