@@ -17,7 +17,7 @@ unsafe extern "system" fn DllMain(dll_module: usize, call_reason: u32, _: *mut (
         logging::setup();
 
         // Applies the host lookup hook
-        unsafe { hooks::hook_host_lookup() };
+        unsafe { hooks::hook() };
 
         // Spawn UI and prepare task set
         std::thread::spawn(|| {

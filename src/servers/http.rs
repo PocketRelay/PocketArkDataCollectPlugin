@@ -14,7 +14,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_openssl::SslStream;
 
 /// The local HTTP server port
-pub const HTTPS_PORT: u16 = 443;
+pub const HTTPS_PORT: u16 = 8443;
 
 pub async fn start_server() -> anyhow::Result<()> {
     // Initializing the underlying TCP listener
