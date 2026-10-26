@@ -1,4 +1,3 @@
-use super::redirector::create_ssl_context;
 use anyhow::Context;
 use hyper::{
     body::{Body, HttpBody},
@@ -7,11 +6,12 @@ use hyper::{
     service::service_fn,
     Request, Response, StatusCode,
 };
-use log::{debug, error};
 use openssl::ssl::Ssl;
+use pocket_ark_client_shared::ssl::create_ssl_context;
 use std::{convert::Infallible, net::Ipv4Addr, pin::Pin};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_openssl::SslStream;
+use tracing::{debug, error};
 
 /// The local HTTP server port
 pub const HTTPS_PORT: u16 = 8443;

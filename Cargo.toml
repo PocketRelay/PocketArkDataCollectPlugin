@@ -13,74 +13,61 @@ keywords = ["Hooking"]
 crate-type = ["cdylib"]
 
 [dependencies]
-log = "0.4.20"
-log-panics = { version = "2", features = ["with-backtrace"] }
+# Shared networking backend for packet implementation
+pocket-ark-blaze-networking = { version = "0.0.0", git = "https://github.com/PocketRelay/PocketArk.git", rev = "548fddeecde94f342e95b34d27a09e73eca1ba0a" }
+pocket-ark-client-shared = "0.0.1"
 
+# Logging
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+log-panics = { version = "2.1.0", features = ["with-backtrace"] }
+
+# HTTP client
 reqwest = { version = "0.11", features = ["json", "gzip", "native-tls"] }
+
+# JSON
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-
+# TDF parsing and serialization
 tdf = { version = "0.4", features = ["bytes"] }
+
 bytes = "1.4.0"
 
+# Async
+tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 futures-util = { version = "0.3", features = ["sink"] }
-thiserror = "1"
+
+# HTTP primitives
 hyper = { version = "0.14", features = ["server", "http1", "tcp", "runtime"] }
-bitflags = "2.4.0"
+
+# Helpers to get known directories
 directories = "5.0.1"
+
+# Errors
+thiserror = "1"
 anyhow = "1.0.76"
 
+# OpenSSL for HTTPS
 openssl = { version = "0.10", features = ["vendored"] }
 tokio-openssl = "0.6.5"
+
+# XML parsing
 quick-xml = { version = "0.31.0", features = ["serialize"] }
+
+# Hooking
 retour = "0.3.1"
 
+# Windows libraries
 [dependencies.windows-sys]
 version = "0.48"
 features = [
-    "Win32_Foundation",
-    "Win32_System_SystemServices",
-    "Win32_System_Memory",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Console",
-    "Win32_Networking_WinSock",
+  "Win32_Foundation",
+  "Win32_System_SystemServices",
+  "Win32_System_Memory",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Console",
+  "Win32_Networking_WinSock",
 ]
-
-# Tokio async runtime
-[dependencies.tokio]
-version = "1"
-features = [
-    "macros",
-    "net",
-    "parking_lot",
-    "rt-multi-thread",
-    "sync",
-    "signal",
-    "fs",
-]
-
-
-[dependencies.native-windows-gui]
-version = "1.0.13"
-
-
-# Logging provider
-[dependencies.log4rs]
-version = "1.2.0"
-default-features = false
-features = ["console_appender", "file_appender"]
-
-
-# Compile x86
-# cargo build --release
-
-# Compile std to reduce size:
-# cargo +nightly build -Z build-std=std,panic_abort --release --target x86_64-pc-windows-msvc
-# [profile.release]
-# opt-level = "z"
-# codegen-units = 1
-# panic = "abort"
-# strip = true
-# lto = true

@@ -1,10 +1,8 @@
-use super::packet::Packet;
-use crate::servers::packet::{PacketCodec, PacketDebug};
 use anyhow::{anyhow, Context};
 use futures_util::{SinkExt, StreamExt};
 use hyper::header::CONTENT_TYPE;
-use log::{debug, error};
 use openssl::ssl::{Ssl, SslContext, SslMethod, SslVerifyMode};
+use pocket_ark_blaze_networking::{packet::PacketCodec, Packet};
 use serde::Deserialize;
 use std::{
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
@@ -16,6 +14,9 @@ use tokio::{
 };
 use tokio_openssl::SslStream;
 use tokio_util::codec::Framed;
+use tracing::{debug, error};
+
+use crate::servers::packet::PacketDebug;
 
 /// The local proxy main server port
 pub const MAIN_PORT: u16 = 42128;
@@ -102,8 +103,8 @@ async fn handle_blaze(client: TcpStream, official_addr: SocketAddr) {
 }
 
 fn debug_log_packet(packet: &Packet, action: &str) {
-    let debug = PacketDebug { packet };
-    debug!("\nOfficial: {}\n{:?}", action, debug);
+    let debug_value = PacketDebug { packet };
+    debug!("\nOfficial: {}\n{:?}", action, debug_value);
 }
 
 #[derive(Deserialize)]
@@ -136,7 +137,7 @@ const REDIRECTOR_PAYLOAD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
       <clienttype>CLIENT_TYPE_GAMEPLAY_USER</clienttype>
       <clientplatform>pc</clientplatform>
       <clientskuid>301449</clientskuid>
-      <clientversion>Future739583retail-x64-0001-60</clientversion>       
+      <clientversion>Future739583retail-x64-0001-60</clientversion>
       <dirtysdkversion>15.1.2.1.0</dirtysdkversion>
       <environment>prod</environment>
       <clientlocale>1701727834</clientlocale>

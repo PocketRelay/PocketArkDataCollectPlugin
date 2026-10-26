@@ -1,6 +1,6 @@
 //! Module for memory manipulation and searching logic
 
-use log::error;
+use tracing::error;
 use windows_sys::Win32::{
     Foundation::{GetLastError, FALSE},
     System::Memory::{VirtualProtect, PAGE_PROTECTION_FLAGS, PAGE_READWRITE},

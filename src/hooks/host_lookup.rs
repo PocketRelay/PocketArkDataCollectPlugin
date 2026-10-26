@@ -1,10 +1,10 @@
-use log::{debug, warn};
 use retour::GenericDetour;
-use std::{ffi::CStr, mem::size_of, ptr::null_mut, sync::LazyLock};
+use std::{ffi::CStr, sync::LazyLock};
+use tracing::debug;
 use windows_sys::{
     core::PCSTR,
     Win32::{
-        Networking::WinSock::{getaddrinfo, ADDRINFOA, AF_INET, SOCKADDR},
+        Networking::WinSock::ADDRINFOA,
         System::LibraryLoader::{GetModuleHandleA, GetProcAddress},
     },
 };
@@ -23,7 +23,7 @@ static HOOK_GET_ADDR_INFO: LazyLock<GenericDetour<GetAddrInfoFn>> = LazyLock::ne
         panic!("Failed to locate address of getaddrinfo() inside ws2_32.dll");
     };
 
-    let ori: GetAddrInfoFn = unsafe { std::mem::transmute(target_addr) };
+    let ori: GetAddrInfoFn = unsafe { std::mem::transmute(target_fn) };
     return unsafe { GenericDetour::new(ori, fake_getaddrinfo).unwrap() };
 });
 
@@ -33,7 +33,7 @@ static LOCALHOST_NODE_NAME: &'static CStr =
 
 /// Collection of addresses that should be redirected to localhost
 /// (Addresses used by the game for various traffic)
-static mut REDIRECT_ADDRESSES: &[&str] = &[
+static REDIRECT_ADDRESSES: &[&str] = &[
     // Redirector
     "winter15.gosredirector.ea.com",
     // Game Server
@@ -86,5 +86,5 @@ pub unsafe extern "system" fn fake_getaddrinfo(
 }
 
 pub unsafe fn hook_host_lookup() {
-    HOOK_GET_ADDR_INFO.enable();
+    _ = HOOK_GET_ADDR_INFO.enable();
 }

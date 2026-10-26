@@ -1,10 +1,10 @@
-use log::{debug, error, warn};
 use retour::GenericDetour;
 use std::mem::size_of;
-use std::{ffi::CStr, sync::LazyLock};
+use std::sync::LazyLock;
+use tracing::debug;
 use windows_sys::Win32::{
-    Networking::WinSock::{connect, AF_INET, SOCKADDR, SOCKADDR_IN, SOCKET},
-    System::LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA},
+    Networking::WinSock::{AF_INET, SOCKADDR, SOCKADDR_IN, SOCKET},
+    System::LibraryLoader::{GetModuleHandleA, GetProcAddress},
 };
 
 use crate::servers::http::HTTPS_PORT;
@@ -22,7 +22,7 @@ static HOOK_CONNECT: LazyLock<GenericDetour<ConnectFn>> = LazyLock::new(|| {
         panic!("Failed to locate address of connect() inside ws2_32.dll");
     };
 
-    let ori: ConnectFn = unsafe { std::mem::transmute(target_addr) };
+    let ori: ConnectFn = unsafe { std::mem::transmute(target_fn) };
     return unsafe { GenericDetour::new(ori, fake_connect).unwrap() };
 });
 
